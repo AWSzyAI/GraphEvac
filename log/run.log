@@ -1,0 +1,47 @@
+[layout] Loaded layout from /Users/szy/Library/Mobile Documents/com~apple~CloudDocs/2025/HiMCM-2025/HiMCMing/NFLS/GraphEvac/layout/baseline.json with 6 rooms.
+=== ILP Result ===
+Status: Optimal
+Optimal total time (s): 3190.0422
+Optimal total time (HH:MM:SS): 00:53:10
+
+Responder F1:
+  Time (s): 3190.0422
+  Time (HH:MM:SS): 00:53:10
+  Assigned rooms: ['R0', 'R1', 'R2', 'R3', 'R4', 'R5']
+  Path:
+     E_L -> R0
+     R0 -> R3
+     R3 -> R4
+     R4 -> R1
+     R1 -> R2
+     R2 -> R5
+     R5 -> G_F1
+
+Responder F2:
+  Time (s): 3190.0422
+  Time (HH:MM:SS): 00:53:10
+  Assigned rooms: ['R0', 'R1', 'R2', 'R3', 'R4', 'R5']
+  Path:
+     E_R -> R2
+     R2 -> R5
+     R5 -> R4
+     R4 -> R1
+     R1 -> R0
+     R0 -> R3
+     R3 -> G_F2
+
+=== Global summary ===
+Total sweep time (makespan): 00:53:10
+F1 order: E_L -> R0 -> R3 -> R4 -> R1 -> R2 -> R5 -> G_F1
+F2 order: E_R -> R2 -> R5 -> R4 -> R1 -> R0 -> R3 -> G_F2
+
+Global first-clear order (by time):
+  R2: 00:05:23 by F2
+  R0: 00:05:43 by F1
+  R5: 00:10:34 by F2
+  R3: 00:11:13 by F1
+  R4: 00:26:06 by F2
+  R1: 00:40:57 by F2
+
+Generating figures under ./out ...
+Saved: out/topo_paths.png, out/gantt.png, out/anim.gif

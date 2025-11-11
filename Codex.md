@@ -1,0 +1,1 @@
+加入冗余设定：每个responder不共享信息，维护一套自己的clear order，对于自己没标记过clear的room，必须自己去看一圈，才能打上clear的标签，然后执行下一个room的clear工作，自己维护的所有room都clear后返回最近的exit处。因此，r判断下面去哪个room的标准并不是该房间有几个人，在一开始，r不知道room里面有没有人，当其进入了一个room的door，才知道此事room中occupants的layout，并且不会记住，而是下次再来room时，会重新判断，只要没有clear，就迟早会再来。
