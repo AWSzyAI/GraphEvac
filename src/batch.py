@@ -26,7 +26,7 @@ from typing import Dict, List, Tuple
 
 sys.path.append(os.path.dirname(__file__))
 
-from ilp_sweep import solve_building_sweep
+from greedy_sweep import solve_building_sweep
 
 
 def _parse_list_or_range(s: str) -> List[int]:
@@ -82,7 +82,8 @@ def _load_simple_layout(path: str):
         # Normalize to E_L/E_R
         exits = {"E_L": list(exits.values())[0], "E_R": list(exits.values())[1]}
     else:
-        xs = [p[0] for (_, (p0, _)) in enumerate(rooms)]
+        # rooms is a list of (room_id, (x,z))
+        xs = [xy[0] for (_rid, xy) in rooms]
         exits = {"E_L": (min(xs) - 5.0, 0.0), "E_R": (max(xs) + 5.0, 0.0)}
     return rooms, exits
 
@@ -104,19 +105,64 @@ def _build_multi_floor(rooms_xy: List[Tuple[str, Tuple[float, float]]], exits_xy
     return rooms, coords, occ
 
 
-def _all_exit_combos(n: int, cap=None):
+def _equal_split_combos(n: int):
+    """
+    Generate up to 4 canonical combos that only depend on counts per exit,
+    not on responder identities. We aim to split responders as evenly as possible
+    between two exits (difference <= 1). We return up to 4 diverse patterns:
+      - contiguous with LEFT-major (ceil(n/2) on L, rest on R)
+      - contiguous with RIGHT-major
+      - interleaved starting with L (until L reaches ceil(n/2))
+      - interleaved starting with R (until R reaches ceil(n/2))
+
+    For small n (<=2), this naturally dedups down to 2 unique combos.
+    Each combo is a tuple of 'L'/'R' of length n.
+    """
+    if n <= 0:
+        return []
+    k_big = (n + 1) // 2
+    k_small = n // 2
+
     combos = []
-    for bits in it.product(["L", "R"], repeat=n):
-        combos.append(bits)
-        if cap is not None and len(combos) >= cap:
-            break
-    return combos
+
+    # 1) Contiguous LEFT-major: L...L R...R
+    combos.append(tuple(["L"] * k_big + ["R"] * k_small))
+    # 2) Contiguous RIGHT-major: R...R L...L
+    combos.append(tuple(["R"] * k_big + ["L"] * k_small))
+
+    # 3) Interleaved starting with L (until L quota filled)
+    left_left = []
+    l_used = 0; r_used = 0
+    for i in range(n):
+        if (i % 2 == 0 and l_used < k_big) or (r_used >= k_small):
+            left_left.append("L"); l_used += 1
+        else:
+            left_left.append("R"); r_used += 1
+    combos.append(tuple(left_left))
+
+    # 4) Interleaved starting with R (until R quota filled)
+    right_right = []
+    l_used = 0; r_used = 0
+    for i in range(n):
+        if (i % 2 == 0 and r_used < k_big) or (l_used >= k_small):
+            right_right.append("R"); r_used += 1
+        else:
+            right_right.append("L"); l_used += 1
+    combos.append(tuple(right_right))
+
+    # Deduplicate while preserving order
+    seen = set()
+    uniq = []
+    for c in combos:
+        if c not in seen:
+            uniq.append(c); seen.add(c)
+    return uniq
 
 
 def main():
     # Inputs
-    floors_arg = os.environ.get("FLOORS", "1")
-    layouts_arg = os.environ.get("LAYOUTS", "T,L")
+    floors_arg = os.environ.get("FLOORS", "2")
+    layouts_arg = os.environ.get("LAYOUTS", "BASELINE,T,L")
     occ_arg = os.environ.get("OCC", "5")
     resp_arg = os.environ.get("RESP", "2")
     combo_cap = os.environ.get("MAX_EXIT_COMBOS")
@@ -132,10 +178,15 @@ def main():
     ap.add_argument("--resp", default=resp_arg)
     ap.add_argument("--max-exit-combos", dest="max_exit", default=combo_cap)
     ap.add_argument("--out", default=out_csv)
+    ap.add_argument("--summary-out", dest="summary_out", default=os.path.join(out_dir, "summary_results.csv"))
     args = ap.parse_args()
 
     floors_list = _parse_list_or_range(args.floors)
     layouts_list = [s.strip().upper() for s in args.layouts.split(",") if s.strip()]
+    # Only auto-append BASELINE when --layouts 未在命令行中显式提供
+    provided_layouts_cli = any(a.startswith("--layouts") for a in sys.argv[1:])
+    if (not provided_layouts_cli) and ("BASELINE" not in layouts_list and "BASE" not in layouts_list and "B" not in layouts_list):
+        layouts_list.append("BASELINE")
     occ_list = _parse_list_or_range(args.occ)
     resp_list = _parse_list_or_range(args.resp)
     max_exit = int(args.max_exit) if args.max_exit else None
@@ -148,8 +199,17 @@ def main():
     except Exception:
         _SIM = {}
 
-    layout_paths = {"T": os.path.join(os.path.dirname(os.path.dirname(__file__)), "layout", "layout_T.json"),
-                    "L": os.path.join(os.path.dirname(os.path.dirname(__file__)), "layout", "layout_L.json")}
+    base_dir = os.path.dirname(os.path.dirname(__file__))
+    layout_paths = {
+        "T": os.path.join(base_dir, "layout", "layout_T.json"),
+        "L": os.path.join(base_dir, "layout", "layout_L.json"),
+        "BASE": os.path.join(base_dir, "layout", "baseline.json"),
+        "BASELINE": os.path.join(base_dir, "layout", "baseline.json"),
+        "B": os.path.join(base_dir, "layout", "baseline.json"),
+    }
+
+    # Track best per (layout, per_room_occ)
+    best_by_layout_occ = {}
 
     with open(args.out, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
@@ -169,7 +229,10 @@ def main():
                         # build geometry for floors
                         rooms, coords, occupants = _build_multi_floor(rooms_xy, exits_xy, floors=floors, per_room_occ=occ)
                         # all exit combos
-                        combos = _all_exit_combos(n, cap=max_exit)
+                        # Reduce combos to equitable splits between two exits
+                        combos = _equal_split_combos(n)
+                        if max_exit:
+                            combos = combos[:max(0, int(max_exit))]
                         for combo_id, combo in enumerate(combos):
                             start_node = {}
                             for i, side in enumerate(combo):
@@ -208,10 +271,40 @@ def main():
                                 "".join(combo),
                                 makespan, _fmt(makespan)
                             ])
-                        # flush per n
-                        f.flush()
+                            # update summary best
+                            key = (layout_code, occ)
+                            cur_best = best_by_layout_occ.get(key)
+                            if cur_best is None or makespan < cur_best["makespan_s"]:
+                                best_by_layout_occ[key] = {
+                                    "makespan_s": makespan,
+                                    "makespan_hms": _fmt(makespan),
+                                    "floors": floors,
+                                    "responders": n,
+                                    "exit_combo": "".join(combo),
+                                }
+                            f.flush()
+                            try:
+                                os.fsync(f.fileno())
+                            except OSError:
+                                pass
 
     print(f"Saved CSV: {args.out}")
+
+    # Write summary CSV: one row per (layout, per_room_occ) with best over floors/responders/combos
+    if best_by_layout_occ:
+        # stable sorting: layout by preferred order (BASELINE, T, L) if present, then others; occ asc
+        layout_order = {name: i for i, name in enumerate(["BASELINE", "T", "L"]) }
+        def _layout_rank(name: str) -> int:
+            return layout_order.get(name, 100 + hash(name) % 1000)
+
+        items = sorted(best_by_layout_occ.items(), key=lambda kv: (_layout_rank(kv[0][0]), kv[0][1]))
+        os.makedirs(os.path.dirname(args.summary_out) or ".", exist_ok=True)
+        with open(args.summary_out, "w", newline="", encoding="utf-8") as sf:
+            sw = csv.writer(sf)
+            sw.writerow(["layout", "per_room_occ", "best_makespan_s", "best_makespan_hms", "best_floors", "best_responders", "best_exit_combo"]) 
+            for (layout_code, occ), info in items:
+                sw.writerow([layout_code, occ, info["makespan_s"], info["makespan_hms"], info["floors"], info["responders"], info["exit_combo"]])
+        print(f"Saved summary CSV: {args.summary_out}")
 
 
 if __name__ == "__main__":

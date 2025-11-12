@@ -46,7 +46,7 @@ install: venv
 run: install
 	@echo "🚀 Running evacuation sweep simulation..."
 	@mkdir -p $(LOG_DIR) $(OUT_DIR)
-	@$(PYTHON) $(MAIN) | tee $(LOG_DIR)/run.log
+	@OUTPUT_ROOT=$(OUT_DIR) $(PYTHON) $(MAIN)
 	@echo "✅ Simulation complete. Logs saved to $(LOG_DIR)/run.log"
 
 # =========================================================
@@ -66,7 +66,17 @@ clean:
 	@echo "✅ Clean complete."
 
 # =========================================================
-# 5. Quick debug
+# 5. Batch sweeps
+# =========================================================
+.PHONY: batch
+batch: install
+	@echo "📊 Running batch sweeps and exporting CSV..."
+	@mkdir -p $(OUT_DIR)
+	@$(PYTHON) $(SRC_DIR)/batch.py --floors "$${FLOORS:-1,18}" --layouts "$${LAYOUTS:-BASELINE,T,L}" --occ "$${OCC:-5}" --resp "$${RESP:-2}" --max-exit-combos "$${MAX_EXIT_COMBOS:-}" --out "$(OUT_DIR)/batch_results.csv"
+	@echo "✅ CSV saved to $(OUT_DIR)/batch_results.csv"
+
+# =========================================================
+# 6. Quick debug
 # =========================================================
 .PHONY: debug
 debug: install
@@ -78,7 +88,7 @@ debug: install
 	PY
 
 # =========================================================
-# 6. Help message
+# 7. Help message
 # =========================================================
 .PHONY: help
 help:
@@ -88,6 +98,7 @@ help:
 	@echo "  make venv        # Create virtual env (.venv)"
 	@echo "  make run         # Run the main simulation"
 	@echo "  make visualize   # Run + generate plots & GIF"
+	@echo "  make batch       # Sweep params and export CSV"
 	@echo "  make clean       # Remove output & log files"
 	@echo "  make debug       # Print current configuration"
 	@echo ""

@@ -2,6 +2,7 @@ import os
 from typing import Dict, List, Tuple
 
 import matplotlib.pyplot as plt
+import matplotlib.colors as mcolors
 
 
 def _ensure_dir(p: str):
@@ -26,31 +27,92 @@ def plot_paths(
     savepath: str = "out/topo_paths.png",
 ):
     _ensure_dir(savepath)
-    fig, ax = plt.subplots(figsize=(8, 4))
+    import numpy as np
 
-    # Draw rooms
-    rx = [coords[r][0] for r in rooms]
-    ry = [coords[r][1] for r in rooms]
-    ax.scatter(rx, ry, marker="s", c="#444", label="Rooms")
+    fig, ax = plt.subplots(figsize=(8.5, 4.5))
+
+    # Heatmap based on first-clear times
+    first = result.get("first_clear", {})
+    by_room = first.get("by_room", {})
+    times = [rec.get("time") for rec in by_room.values() if rec.get("time") is not None]
+    t_min = min(times) if times else 0.0
+    t_max = max(times) if times else 1.0
+    cmap = plt.cm.inferno
+    rx = np.array([coords[r][0] for r in rooms])
+    ry = np.array([coords[r][1] for r in rooms])
+    room_scores = []
     for r in rooms:
-        ax.text(coords[r][0] + 0.8, coords[r][1] + 0.3, r, fontsize=9, color="#333")
+        t = by_room.get(r, {}).get("time")
+        if t is None or t_max == t_min:
+            room_scores.append(0.0)
+        else:
+            room_scores.append((t - t_min) / (t_max - t_min))
+    room_scores = np.array(room_scores)
+    rooms_sc = ax.scatter(
+        rx,
+        ry,
+        marker="s",
+        s=120,
+        c=room_scores,
+        cmap=cmap,
+        edgecolors="#555555",
+        linewidths=0.8,
+    )
+    cbar = fig.colorbar(rooms_sc, ax=ax, pad=0.03)
+    cbar.set_label("First-clear time (s)")
+    for r in rooms:
+        ax.text(coords[r][0], coords[r][1] + 0.5, r, fontsize=8, color="#111", ha="center")
 
-    # Draw exits
-    exits = set(start_node.values())
+    # Draw exits (prefer meta exits if present)
+    exits = set(result.get("meta", {}).get("exits", list(start_node.values())))
     ex = [coords[e][0] for e in exits]
     ey = [coords[e][1] for e in exits]
     ax.scatter(ex, ey, marker="^", s=80, c="#2ca02c", label="Exits")
     for e in exits:
-        ax.text(coords[e][0] + 0.8, coords[e][1] + 0.3, e, fontsize=9, color="#2ca02c")
+        ax.text(
+            coords[e][0] + 0.8,
+            coords[e][1] + 0.3,
+            e,
+            fontsize=8,
+            color="#2ca02c",
+            bbox=dict(boxstyle="round,pad=0.1", facecolor="white", alpha=0.6, edgecolor="none"),
+        )
 
-    # First-clear times labels
-    first = result.get("first_clear", {})
-    by_room = first.get("by_room", {})
+    # First-clear labels offset
     for r, rec in by_room.items():
         t = rec.get("time")
         by = rec.get("by")
+        if t is None:
+            continue
         txt = f"{_fmt_hms(t)}\nby {by}"
-        ax.text(coords[r][0] + 10, coords[r][1], txt, fontsize=8, color="#1f77b4")
+        x, y = coords[r]
+        ax.text(
+            x + 0.8,
+            y + 0.4,
+            txt,
+            fontsize=8,
+            color="#1f77b4",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7, edgecolor="none"),
+        )
+
+    # Add total makespan + full order at lower left
+    order = first.get("order", [])
+    makespan = result.get("T_total")
+    if makespan is not None:
+        order_str = " -> ".join(order) if order else "N/A"
+        x_min = min(np.concatenate([rx, ex])) if len(rx) + len(ex) else 0
+        y_min = min(np.concatenate([ry, ey])) if len(ry) + len(ey) else 0
+        text = f"Makespan: {_fmt_hms(makespan)}\nOrder: {order_str}"
+        ax.text(
+            x_min,
+            y_min - 1.0,
+            text,
+            fontsize=8,
+            color="#111",
+            verticalalignment="top",
+            horizontalalignment="left",
+            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85, edgecolor="#666"),
+        )
 
     # Draw paths per responder
     colors = [
@@ -107,8 +169,8 @@ def plot_paths(
     ax.set_xlabel("X (m)")
     ax.set_ylabel("Z (m)")
     ax.set_title("Responder Paths and First-Clear Times")
-    ax.legend(loc="upper center", ncol=3, fontsize=8, frameon=False)
-    fig.tight_layout()
+    ax.legend(loc="upper left", fontsize=8, frameon=False)
+    fig.tight_layout(pad=1.4)
     fig.savefig(savepath, dpi=150)
     plt.close(fig)
 
@@ -128,6 +190,13 @@ def plot_gantt(
     # Build segments per responder
     segs = {}
     for k, info in result.get("responders", {}).items():
+        timeline = info.get("timeline")
+        if timeline:
+            segs[k] = [
+                (entry["type"], entry["from"], entry["to"], entry["t0"], entry["t1"])
+                for entry in timeline
+            ]
+            continue
         path = info.get("path", [])
         t = 0.0
         ksegs = []
@@ -160,32 +229,73 @@ def plot_gantt(
         segs[k] = ksegs
 
     # Plot Gantt
-    fig, ax = plt.subplots(figsize=(10, 4 + 0.6 * len(segs)))
-    colors = {"walk": "#1f77b4", "clear": "#2ca02c"}
+    fig, ax = plt.subplots(figsize=(10, 3 + 0.8 * len(segs)))
+    base_palette = [
+        "#1f77b4",
+        "#ff7f0e",
+        "#2ca02c",
+        "#d62728",
+        "#9467bd",
+        "#8c564b",
+        "#e377c2",
+        "#7f7f7f",
+        "#bcbd22",
+        "#17becf",
+    ]
+
+    def _variant(color, typ):
+        rgb = mcolors.to_rgb(color)
+        if typ == "clear":
+            rgb = tuple(min(1.0, c + 0.4 * (1 - c)) for c in rgb)
+        elif typ == "escort":
+            rgb = tuple(min(1.0, c + 0.15) for c in rgb)
+        elif typ == "return":
+            rgb = tuple(max(0.0, c * 0.6) for c in rgb)
+        else:
+            rgb = tuple(max(0.0, c * 0.85) for c in rgb)
+        return rgb
     yticks = []
     yticklbls = []
     y = 10
-    for k, ksegs in segs.items():
-        # walking bars
+    legends = []
+
+    for idx, (k, ksegs) in enumerate(segs.items()):
+        base = base_palette[idx % len(base_palette)]
         for typ, u, v, t0, t1 in ksegs:
-            ax.broken_barh([(t0, t1 - t0)], (y, 8), facecolors=colors[typ], alpha=0.8 if typ == "walk" else 0.6)
+            color = _variant(base, typ)
+            ax.broken_barh([(t0, t1 - t0)], (y, 8), facecolors=color, edgecolors="none", alpha=0.95)
             if typ == "clear":
                 ax.text(t0 + (t1 - t0) / 2, y + 4, v, ha="center", va="center", fontsize=8, color="#111")
         yticks.append(y + 4)
         yticklbls.append(k)
+        legends.append((base, k))
         y += 15
 
     ax.set_yticks(yticks)
     ax.set_yticklabels(yticklbls)
     ax.set_xlabel("Time (s) [labels show room for clear segments]")
-    ax.set_title("Responder Timeline (walk vs clear)")
+    ax.set_title("Responder Timeline (walk vs clear)", pad=16)
     # Nice HH:MM:SS tick labels
     def secfmt(x, pos=None):
         return _fmt_hms(x)
     import matplotlib.ticker as mticker
     ax.xaxis.set_major_formatter(mticker.FuncFormatter(secfmt))
     ax.grid(True, axis="x", linestyle=":", alpha=0.4)
-    ax.set_xlim(0, max(result.get("T_total", 0.0), max((t1 for ksegs in segs.values() for (_, _, _, _, t1) in ksegs), default=0.0)))
+    ax.set_xlim(
+        0,
+        max(
+            result.get("T_total", 0.0),
+            max((t1 for ksegs in segs.values() for (_, _, _, _, t1) in ksegs), default=0.0),
+        ),
+    )
+    # custom legend
+    handles = []
+    for base, label in legends:
+        for typ in ("walk", "escort", "return", "clear"):
+            handles.append(
+                plt.Line2D([0], [0], color=_variant(base, typ), lw=6, label=f"{label} {typ}"),
+            )
+    ax.legend(handles=handles, loc="upper right", fontsize=7, frameon=False, ncol=2)
     fig.tight_layout()
     fig.savefig(savepath, dpi=150)
     plt.close(fig)
@@ -217,11 +327,27 @@ def animate_gif(
 
     walk_speed = float(result.get("meta", {}).get("walk_speed_used", 1.0))
     sweep_time = result.get("sweep_time", {})
-    exits = set(start_node.values())
+    exits = set(result.get("meta", {}).get("exits", list(start_node.values())))
 
     # Build segments per responder: (typ, u, v, p0, p1, t0, t1)
     segs = {}
     for k, info in result.get("responders", {}).items():
+        timeline = info.get("timeline")
+        if timeline:
+            ksegs = [
+                (
+                    entry["type"],
+                    entry["from"],
+                    entry["to"],
+                    entry["p0"],
+                    entry["p1"],
+                    entry["t0"],
+                    entry["t1"],
+                )
+                for entry in timeline
+            ]
+            segs[k] = ksegs
+            continue
         path = info.get("path", [])
         t = 0.0
         ksegs = []
@@ -289,7 +415,14 @@ def animate_gif(
     for r in rooms:
         ax.text(coords[r][0] + 0.8, coords[r][1] + 0.3, r, fontsize=9, color="#333")
     for e in exits:
-        ax.text(coords[e][0] + 0.8, coords[e][1] + 0.3, e, fontsize=9, color="#2ca02c")
+        ax.text(
+            coords[e][0] + 0.8,
+            coords[e][1] + 0.3,
+            e,
+            fontsize=8,
+            color="#2ca02c",
+            bbox=dict(boxstyle="round,pad=0.1", facecolor="white", alpha=0.6, edgecolor="none"),
+        )
 
     # Responder markers
     colors = [
@@ -392,6 +525,7 @@ def animate_gif(
 
     def update(frame_idx):
         t_now = frame_idx * dt
+        time_text.set_text(f"t={_fmt_hms(t_now)}")
         # update room colors by first-clear
         for i, r in enumerate(rooms):
             t_clear = room_first.get(r)

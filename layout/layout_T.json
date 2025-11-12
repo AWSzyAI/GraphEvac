@@ -1,0 +1,21 @@
+{
+  "layout": {
+    "rooms": [
+      {"id": "RT1", "entry": {"x": 20, "z": 45}, "occupants": 5},
+      {"id": "RT2", "entry": {"x": 32, "z": 45}, "occupants": 5},
+      {"id": "RT3", "entry": {"x": 44, "z": 45}, "occupants": 5},
+      {"id": "RT4", "entry": {"x": 56, "z": 45}, "occupants": 5},
+      {"id": "RT5", "entry": {"x": 68, "z": 45}, "occupants": 5},
+
+      {"id": "RV1", "entry": {"x": 44, "z": 36}, "occupants": 5},
+      {"id": "RV2", "entry": {"x": 44, "z": 28}, "occupants": 5},
+      {"id": "RV3", "entry": {"x": 44, "z": 20}, "occupants": 5},
+      {"id": "RV4", "entry": {"x": 44, "z": 12}, "occupants": 5}
+    ]
+  },
+  "responders": [
+    {"id": "F1", "pos": {"x": 10, "z": 30}},
+    {"id": "F2", "pos": {"x": 80, "z": 30}}
+  ]
+}
+

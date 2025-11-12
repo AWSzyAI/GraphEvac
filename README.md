@@ -106,4 +106,12 @@ $$t_r\,=\,t_{\text{base}}\,+\,\alpha\,N_r\,,$$
 
 ```
 brew install xyz
+python src/batch.py \
+        --floors 1-18 \
+        --layouts T,L \
+        --occ 1-10 \
+        --resp 1-10 \
+        --out output/batch_results.csv
+
+FLOORS=2 make run
 ```
