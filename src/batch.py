@@ -6,14 +6,14 @@ Batch runner for sweeping parameters and exporting CSV.
 
 Parameters (via CLI args or env vars):
 - --floors: comma list or range (e.g., 1-3) for number of floors (a)
-- --layouts: subset of {T,L} (b)
+- --layouts: subset of {BASELINE,A,B} plus legacy aliases (b)
 - --occ: occupants per room list or range (e.g., 1-10) (c)
 - --resp: responder counts list or range (e.g., 1-4) (n)
 - --max-exit-combos: cap on exit assignments per n (m cap); default is all 2^n
 - --out: output CSV path (default: OUT_DIR/batch_results.csv or ./output/batch_results.csv)
 
 Usage examples:
-  python src/batch.py --floors 1-2 --layouts T,L --occ 3-5 --resp 1-3 --max-exit-combos 8
+  python src/batch.py --floors 1-2 --layouts BASELINE,A,B --occ 3-5 --resp 1-3 --max-exit-combos 8
   OUT_DIR=output LAYOUT_FILE=layout/layout_T.json python src/batch.py --floors 1 --occ 5 --resp 2
 """
 
@@ -25,6 +25,8 @@ import itertools as it
 from typing import Dict, List, Tuple
 
 sys.path.append(os.path.dirname(__file__))
+
+from configs import BATCH_CONFIG
 
 from greedy_sweep import solve_building_sweep
 
@@ -88,7 +90,7 @@ def _load_simple_layout(path: str):
     return rooms, exits
 
 
-def _build_multi_floor(rooms_xy: List[Tuple[str, Tuple[float, float]]], exits_xy: Dict[str, Tuple[float, float]], floors: int, per_room_occ: int, floor_spacing: float = 60.0):
+def _build_multi_floor(rooms_xy: List[Tuple[str, Tuple[float, float]]], exits_xy: Dict[str, Tuple[float, float]], floors: int, per_room_occ: int, floor_spacing: float = 20.0):
     rooms = []
     coords = {}
     occ = {}
@@ -106,65 +108,54 @@ def _build_multi_floor(rooms_xy: List[Tuple[str, Tuple[float, float]]], exits_xy
 
 
 def _equal_split_combos(n: int):
-    """
-    Generate up to 4 canonical combos that only depend on counts per exit,
-    not on responder identities. We aim to split responders as evenly as possible
-    between two exits (difference <= 1). We return up to 4 diverse patterns:
-      - contiguous with LEFT-major (ceil(n/2) on L, rest on R)
-      - contiguous with RIGHT-major
-      - interleaved starting with L (until L reaches ceil(n/2))
-      - interleaved starting with R (until R reaches ceil(n/2))
-
-    For small n (<=2), this naturally dedups down to 2 unique combos.
-    Each combo is a tuple of 'L'/'R' of length n.
-    """
+    """Reduced combos: just left/right splits plus alternates."""
     if n <= 0:
         return []
-    k_big = (n + 1) // 2
-    k_small = n // 2
+    left_count = (n + 1) // 2
+    right_count = n // 2
 
     combos = []
+    left_major = tuple(["L"] * left_count + ["R"] * right_count)
+    right_major = tuple(["R"] * left_count + ["L"] * right_count)
+    combos.append(left_major)
+    combos.append(right_major)
 
-    # 1) Contiguous LEFT-major: L...L R...R
-    combos.append(tuple(["L"] * k_big + ["R"] * k_small))
-    # 2) Contiguous RIGHT-major: R...R L...L
-    combos.append(tuple(["R"] * k_big + ["L"] * k_small))
+    if n % 2 == 0:
+        alternating = tuple(["L" if i % 2 == 0 else "R" for i in range(n)])
+        combos.append(alternating)
+    else:
+        combos.append(tuple(["L" if i % 2 == 0 else "R" for i in range(n)]))
+        combos.append(tuple(["R" if i % 2 == 0 else "L" for i in range(n)]))
 
-    # 3) Interleaved starting with L (until L quota filled)
-    left_left = []
-    l_used = 0; r_used = 0
-    for i in range(n):
-        if (i % 2 == 0 and l_used < k_big) or (r_used >= k_small):
-            left_left.append("L"); l_used += 1
-        else:
-            left_left.append("R"); r_used += 1
-    combos.append(tuple(left_left))
-
-    # 4) Interleaved starting with R (until R quota filled)
-    right_right = []
-    l_used = 0; r_used = 0
-    for i in range(n):
-        if (i % 2 == 0 and r_used < k_big) or (l_used >= k_small):
-            right_right.append("R"); r_used += 1
-        else:
-            right_right.append("L"); l_used += 1
-    combos.append(tuple(right_right))
-
-    # Deduplicate while preserving order
     seen = set()
     uniq = []
     for c in combos:
         if c not in seen:
-            uniq.append(c); seen.add(c)
+            uniq.append(c)
+            seen.add(c)
     return uniq
 
 
+def _format_responder_orders(result: dict, responders: List[str], rooms: List[str]) -> str:
+    room_set = set(rooms)
+    parts = []
+    for rid in responders:
+        info = result.get("responders", {}).get(rid, {})
+        seq = [v for (_, v) in info.get("path", []) if v in room_set]
+        parts.append(f"{rid}:{'->'.join(seq) if seq else 'N/A'}")
+    return " | ".join(parts)
+
+
+def _format_start_positions(start_node: Dict[str, str], responders: List[str]) -> str:
+    return ";".join(f"{rid}:{start_node.get(rid, 'N/A')}" for rid in responders)
+
+
 def main():
-    # Inputs
-    floors_arg = os.environ.get("FLOORS", "2")
-    layouts_arg = os.environ.get("LAYOUTS", "BASELINE,T,L")
-    occ_arg = os.environ.get("OCC", "5")
-    resp_arg = os.environ.get("RESP", "2")
+    # Inputs (env override or batch defaults defined in configs.py)
+    floors_arg = os.environ.get("FLOORS", BATCH_CONFIG.get("floors", "2"))
+    layouts_arg = os.environ.get("LAYOUTS", BATCH_CONFIG.get("layouts", "BASELINE,A,B"))
+    occ_arg = os.environ.get("OCC", BATCH_CONFIG.get("occ", "5"))
+    resp_arg = os.environ.get("RESP", BATCH_CONFIG.get("resp", "2"))
     combo_cap = os.environ.get("MAX_EXIT_COMBOS")
     out_dir = os.environ.get("OUT_DIR", "output")
     out_csv = os.environ.get("OUT_CSV", os.path.join(out_dir, "batch_results.csv"))
@@ -185,13 +176,14 @@ def main():
     layouts_list = [s.strip().upper() for s in args.layouts.split(",") if s.strip()]
     # Only auto-append BASELINE when --layouts 未在命令行中显式提供
     provided_layouts_cli = any(a.startswith("--layouts") for a in sys.argv[1:])
-    if (not provided_layouts_cli) and ("BASELINE" not in layouts_list and "BASE" not in layouts_list and "B" not in layouts_list):
+    if (not provided_layouts_cli) and ("BASELINE" not in layouts_list and "BASE" not in layouts_list):
         layouts_list.append("BASELINE")
     occ_list = _parse_list_or_range(args.occ)
     resp_list = _parse_list_or_range(args.resp)
     max_exit = int(args.max_exit) if args.max_exit else None
 
     os.makedirs(os.path.dirname(args.out) or ".", exist_ok=True)
+    select_out = os.environ.get("SELECT_OUT", os.path.join(out_dir, "select_result.csv"))
 
     # Pull SIM_CONFIG for solver parameters
     try:
@@ -201,19 +193,36 @@ def main():
 
     base_dir = os.path.dirname(os.path.dirname(__file__))
     layout_paths = {
+        "A": os.path.join(base_dir, "layout", "layout_A.json"),
+        "LAYOUT_A": os.path.join(base_dir, "layout", "layout_A.json"),
+        "B": os.path.join(base_dir, "layout", "layout_B.json"),
+        "LAYOUT_B": os.path.join(base_dir, "layout", "layout_B.json"),
         "T": os.path.join(base_dir, "layout", "layout_T.json"),
         "L": os.path.join(base_dir, "layout", "layout_L.json"),
         "BASE": os.path.join(base_dir, "layout", "baseline.json"),
         "BASELINE": os.path.join(base_dir, "layout", "baseline.json"),
-        "B": os.path.join(base_dir, "layout", "baseline.json"),
     }
 
+    # Track best per (layout, floors, responders)
+    best_by_combo = {}
     # Track best per (layout, per_room_occ)
     best_by_layout_occ = {}
 
     with open(args.out, "w", newline="", encoding="utf-8") as f:
         writer = csv.writer(f)
-        writer.writerow(["floors", "layout", "per_room_occ", "responders", "exit_combo_id", "exit_combo", "makespan_s", "makespan_hms"]) 
+        writer.writerow([
+            "layout",
+            "floors",
+            "per_room_occ",
+            "responders",
+            "exit_combo",
+            "makespan_hms",
+            "room_clear_order",
+            "exit_combo_id",
+            "makespan_s",
+            "responder_orders",
+            "start_positions",
+        ])
 
         for floors in floors_list:
             for layout_code in layouts_list:
@@ -266,21 +275,51 @@ def main():
                                 return f"{h:02d}:{m:02d}:{sec:02d}"
 
                             makespan = float(result.get("T_total") or 0.0)
+                            room_order = result.get("first_clear", {}).get("order", [])
+                            room_order_str = "->".join(room_order)
+                            responder_orders = _format_responder_orders(result, responders, rooms)
+                            start_positions = _format_start_positions(start_node, responders)
                             writer.writerow([
-                                floors, layout_code, occ, n, combo_id,
+                                layout_code,
+                                floors,
+                                occ,
+                                n,
                                 "".join(combo),
-                                makespan, _fmt(makespan)
+                                _fmt(makespan),
+                                room_order_str,
+                                combo_id,
+                                makespan,
+                                responder_orders,
+                                start_positions,
                             ])
-                            # update summary best
-                            key = (layout_code, occ)
-                            cur_best = best_by_layout_occ.get(key)
-                            if cur_best is None or makespan < cur_best["makespan_s"]:
-                                best_by_layout_occ[key] = {
+                            key = (layout_code, floors, n)
+                            cur_best_combo = best_by_combo.get(key)
+                            if cur_best_combo is None or makespan < cur_best_combo["makespan_s"]:
+                                best_by_combo[key] = {
+                                    "layout": layout_code,
+                                    "floors": floors,
+                                    "per_room_occ": occ,
+                                    "responders": n,
+                                    "exit_combo": "".join(combo),
+                                    "exit_combo_id": combo_id,
+                                    "makespan_s": makespan,
+                                    "makespan_hms": _fmt(makespan),
+                                    "room_order": room_order_str,
+                                    "responder_orders": responder_orders,
+                                    "start_positions": start_positions,
+                                }
+                            layout_key = (layout_code, occ)
+                            cur_best_layout = best_by_layout_occ.get(layout_key)
+                            if cur_best_layout is None or makespan < cur_best_layout["makespan_s"]:
+                                best_by_layout_occ[layout_key] = {
                                     "makespan_s": makespan,
                                     "makespan_hms": _fmt(makespan),
                                     "floors": floors,
                                     "responders": n,
                                     "exit_combo": "".join(combo),
+                                    "room_order": room_order_str,
+                                    "responder_orders": responder_orders,
+                                    "start_positions": start_positions,
                                 }
                             f.flush()
                             try:
@@ -289,6 +328,40 @@ def main():
                                 pass
 
     print(f"Saved CSV: {args.out}")
+
+    # Write select_result CSV: best initial-responder assignment per (layout,floors,responders)
+    if best_by_combo:
+        os.makedirs(os.path.dirname(select_out) or ".", exist_ok=True)
+        with open(select_out, "w", newline="", encoding="utf-8") as sf:
+            sw = csv.writer(sf)
+            sw.writerow([
+                "layout",
+                "floors",
+                "per_room_occ",
+                "responders",
+                "exit_combo",
+                "makespan_hms",
+                "room_clear_order",
+                "exit_combo_id",
+                "makespan_s",
+                "responder_orders",
+                "start_positions",
+            ])
+            for info in best_by_combo.values():
+                sw.writerow([
+                    info.get("layout", ""),
+                    info.get("floors", 0),
+                    info.get("per_room_occ", 0),
+                    info.get("responders", 0),
+                    info.get("exit_combo", ""),
+                    info.get("makespan_hms", ""),
+                    info.get("room_order", ""),
+                    info.get("exit_combo_id", ""),
+                    info.get("makespan_s", 0.0),
+                    info.get("responder_orders", ""),
+                    info.get("start_positions", ""),
+                ])
+        print(f"Saved select CSV: {select_out}")
 
     # Write summary CSV: one row per (layout, per_room_occ) with best over floors/responders/combos
     if best_by_layout_occ:
@@ -301,9 +374,31 @@ def main():
         os.makedirs(os.path.dirname(args.summary_out) or ".", exist_ok=True)
         with open(args.summary_out, "w", newline="", encoding="utf-8") as sf:
             sw = csv.writer(sf)
-            sw.writerow(["layout", "per_room_occ", "best_makespan_s", "best_makespan_hms", "best_floors", "best_responders", "best_exit_combo"]) 
+            sw.writerow([
+                "layout",
+                "per_room_occ",
+                "best_makespan_s",
+                "best_makespan_hms",
+                "best_floors",
+                "best_responders",
+                "best_exit_combo",
+                "best_room_clear_order",
+                "best_responder_orders",
+                "best_start_positions",
+            ])
             for (layout_code, occ), info in items:
-                sw.writerow([layout_code, occ, info["makespan_s"], info["makespan_hms"], info["floors"], info["responders"], info["exit_combo"]])
+                sw.writerow([
+                    layout_code,
+                    occ,
+                    info["makespan_s"],
+                    info["makespan_hms"],
+                    info["floors"],
+                    info["responders"],
+                    info["exit_combo"],
+                    info.get("room_order", ""),
+                    info.get("responder_orders", ""),
+                    info.get("start_positions", ""),
+                ])
         print(f"Saved summary CSV: {args.summary_out}")
 
 

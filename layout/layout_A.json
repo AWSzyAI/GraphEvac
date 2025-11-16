@@ -1,0 +1,25 @@
+{
+  "layout": {
+    "rooms": [
+      {"id": "A_T1", "entry": {"x": 12, "z": 60}, "occupants": 4},
+      {"id": "A_T2", "entry": {"x": 32, "z": 60}, "occupants": 6},
+      {"id": "A_T3", "entry": {"x": 52, "z": 60}, "occupants": 5},
+      {"id": "A_T4", "entry": {"x": 72, "z": 60}, "occupants": 3},
+
+      {"id": "A_M1", "entry": {"x": 20, "z": 40}, "occupants": 8},
+      {"id": "A_M2", "entry": {"x": 40, "z": 40}, "occupants": 6},
+      {"id": "A_M3", "entry": {"x": 60, "z": 40}, "occupants": 7},
+
+      {"id": "A_B1", "entry": {"x": 12, "z": 20}, "occupants": 5},
+      {"id": "A_B2", "entry": {"x": 32, "z": 20}, "occupants": 4},
+      {"id": "A_B3", "entry": {"x": 52, "z": 20}, "occupants": 6},
+      {"id": "A_B4", "entry": {"x": 72, "z": 20}, "occupants": 5}
+    ]
+  },
+  "responders": [
+    {"id": "F1", "pos": {"x": 0, "z": 35}},
+    {"id": "F2", "pos": {"x": 90, "z": 35}},
+    {"id": "F3", "pos": {"x": 45, "z": 0}}
+  ]
+}
+

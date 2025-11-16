@@ -1,6 +1,8 @@
-*__pycache__/*
+*__pycache__*
 *.pyc
 .DS_Store
 .venv/
-./output/*
-./log/*
+output
+log
+folder-alias.json
+private-folder-alias.json

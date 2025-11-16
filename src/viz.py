@@ -29,7 +29,9 @@ def plot_paths(
     _ensure_dir(savepath)
     import numpy as np
 
-    fig, ax = plt.subplots(figsize=(8.5, 4.5))
+    fig, ax = plt.subplots(figsize=(10, 6))
+    fig.patch.set_facecolor("#fdfdfd")
+    ax.set_facecolor("#fbfbfb")
 
     # Heatmap based on first-clear times
     first = result.get("first_clear", {})
@@ -37,7 +39,7 @@ def plot_paths(
     times = [rec.get("time") for rec in by_room.values() if rec.get("time") is not None]
     t_min = min(times) if times else 0.0
     t_max = max(times) if times else 1.0
-    cmap = plt.cm.inferno
+    cmap = plt.cm.get_cmap("inferno")
     rx = np.array([coords[r][0] for r in rooms])
     ry = np.array([coords[r][1] for r in rooms])
     room_scores = []
@@ -48,26 +50,25 @@ def plot_paths(
         else:
             room_scores.append((t - t_min) / (t_max - t_min))
     room_scores = np.array(room_scores)
-    rooms_sc = ax.scatter(
+    ax.scatter(
         rx,
         ry,
         marker="s",
-        s=120,
+        s=140,
         c=room_scores,
         cmap=cmap,
         edgecolors="#555555",
-        linewidths=0.8,
+        linewidths=0.9,
+        zorder=3,
     )
-    cbar = fig.colorbar(rooms_sc, ax=ax, pad=0.03)
-    cbar.set_label("First-clear time (s)")
     for r in rooms:
-        ax.text(coords[r][0], coords[r][1] + 0.5, r, fontsize=8, color="#111", ha="center")
+        ax.text(coords[r][0], coords[r][1] + 0.6, r, fontsize=9, color="#222222", ha="center")
 
     # Draw exits (prefer meta exits if present)
     exits = set(result.get("meta", {}).get("exits", list(start_node.values())))
     ex = [coords[e][0] for e in exits]
     ey = [coords[e][1] for e in exits]
-    ax.scatter(ex, ey, marker="^", s=80, c="#2ca02c", label="Exits")
+    ax.scatter(ex, ey, marker="^", s=90, c="#2ca02c", label="Exits", edgecolors="w")
     for e in exits:
         ax.text(
             coords[e][0] + 0.8,
@@ -87,31 +88,30 @@ def plot_paths(
         txt = f"{_fmt_hms(t)}\nby {by}"
         x, y = coords[r]
         ax.text(
-            x + 0.8,
+            x + 0.9,
             y + 0.4,
             txt,
             fontsize=8,
-            color="#1f77b4",
-            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.7, edgecolor="none"),
+            color="#0b3d91",
+            bbox=dict(boxstyle="round,pad=0.2", facecolor="white", alpha=0.85, edgecolor="none"),
         )
 
-    # Add total makespan + full order at lower left
+    # Add total makespan + full order at figure bottom (avoid covering map)
     order = first.get("order", [])
     makespan = result.get("T_total")
     if makespan is not None:
         order_str = " -> ".join(order) if order else "N/A"
-        x_min = min(np.concatenate([rx, ex])) if len(rx) + len(ex) else 0
-        y_min = min(np.concatenate([ry, ey])) if len(ry) + len(ey) else 0
-        text = f"Makespan: {_fmt_hms(makespan)}\nOrder: {order_str}"
-        ax.text(
-            x_min,
-            y_min - 1.0,
+        text = f"Makespan: {_fmt_hms(makespan)}  |  Order: {order_str}"
+        bbox = dict(boxstyle="round", facecolor="white", alpha=0.9, edgecolor="#cccccc")
+        fig.text(
+            0.01,
+            0.01,
             text,
-            fontsize=8,
-            color="#111",
-            verticalalignment="top",
-            horizontalalignment="left",
-            bbox=dict(boxstyle="round", facecolor="white", alpha=0.85, edgecolor="#666"),
+            fontsize=9,
+            color="#1b1b1b",
+            ha="left",
+            va="bottom",
+            bbox=bbox,
         )
 
     # Draw paths per responder
@@ -166,11 +166,14 @@ def plot_paths(
         ax.scatter([], [], color=c, label=f"Path {k}")
 
     ax.set_aspect("equal", adjustable="box")
-    ax.set_xlabel("X (m)")
-    ax.set_ylabel("Z (m)")
-    ax.set_title("Responder Paths and First-Clear Times")
-    ax.legend(loc="upper left", fontsize=8, frameon=False)
-    fig.tight_layout(pad=1.4)
+    ax.set_xticks([])
+    ax.set_yticks([])
+    for spine in ax.spines.values():
+        spine.set_visible(False)
+    ax.set_title("Responder Routes with First-Clear Pulse", fontsize=16, pad=18)
+    leg = ax.legend(loc="upper left", fontsize=9, frameon=False)
+    leg.set_title("Responder paths", prop={"size": 9})
+    fig.tight_layout(pad=0.8)
     fig.savefig(savepath, dpi=150)
     plt.close(fig)
 
@@ -565,3 +568,27 @@ def animate_gif(
     writer = PillowWriter(fps=fps)
     anim.save(savepath, writer=writer)
     plt.close(fig)
+
+    # Extract key frames from the generated GIF (no re-draw)
+    try:
+        from PIL import Image
+
+        base = os.path.splitext(savepath)[0]
+        with Image.open(savepath) as im:
+            total_frames = getattr(im, "n_frames", 1)
+            if total_frames <= 0:
+                return
+            idxs = sorted({
+                0,
+                max(0, total_frames // 4),
+                max(0, (3 * total_frames) // 4),
+                total_frames - 1,
+            })
+            names = ["start", "q1", "q3", "end"]
+            for name, frame_idx in zip(names, idxs):
+                im.seek(frame_idx)
+                frame = im.convert("RGBA")
+                frame.save(f"{base}_{name}.png")
+    except Exception:
+        # If Pillow is not available or GIF reading fails, silently skip PNG snapshots.
+        pass

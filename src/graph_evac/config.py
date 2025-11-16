@@ -31,7 +31,7 @@ class Config:
     time_per_occupant: float = 3.0
     walk_speed: float = 1.0
     floors: int = 1
-    floor_spacing: float = 60.0
+    floor_spacing: float = 20.0
     run_simulation: bool = True
     output_root: str = "out"
 

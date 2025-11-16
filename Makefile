@@ -12,6 +12,13 @@ OUT_DIR := output
 VENV_DIR := .venv
 PYTHON   := $(VENV_DIR)/bin/python
 PIP      := $(VENV_DIR)/bin/pip
+PYTHON_SYS := python3
+PYTHONPATH_SRC := $(shell pwd)/src
+
+BATCH_FLOORS ?= $(shell PYTHONPATH=$(PYTHONPATH_SRC) $(PYTHON_SYS) -c "from configs import BATCH_CONFIG; print(BATCH_CONFIG.get('floors', '1-18'))")
+BATCH_LAYOUTS ?= $(shell PYTHONPATH=$(PYTHONPATH_SRC) $(PYTHON_SYS) -c "from configs import BATCH_CONFIG; print(BATCH_CONFIG.get('layouts', 'BASELINE,T,L'))")
+BATCH_OCC ?= $(shell PYTHONPATH=$(PYTHONPATH_SRC) $(PYTHON_SYS) -c "from configs import BATCH_CONFIG; print(BATCH_CONFIG.get('occ', '5-10'))")
+BATCH_RESP ?= $(shell PYTHONPATH=$(PYTHONPATH_SRC) $(PYTHON_SYS) -c "from configs import BATCH_CONFIG; print(BATCH_CONFIG.get('resp', '1-10'))")
 
 MAIN := $(SRC_DIR)/main.py
 VIZ  := $(SRC_DIR)/viz.py
@@ -43,18 +50,19 @@ install: venv
 # 2. Run Simulation
 # =========================================================
 .PHONY: run
-run: install
+run: 
 	@echo "🚀 Running evacuation sweep simulation..."
 	@mkdir -p $(LOG_DIR) $(OUT_DIR)
 	@OUTPUT_ROOT=$(OUT_DIR) $(PYTHON) $(MAIN)
-	@echo "✅ Simulation complete. Logs saved to $(LOG_DIR)/run.log"
+	@echo "✅ Simulation complete. Check output/*/run.log for detailed logs"
 
 # =========================================================
 # 3. Visualization
 # =========================================================
 .PHONY: visualize
-visualize: run
-	@echo "🎨 Visualization artifacts are under $(OUT_DIR)/"
+visualize: install
+	@echo "🎨 Rebuilding visualization assets from the latest run..."
+	@OUTPUT_ROOT=$(OUT_DIR) $(PYTHON) $(SRC_DIR)/render_viz.py --output-root $(OUT_DIR)
 
 # =========================================================
 # 4. Clean-up
@@ -69,10 +77,10 @@ clean:
 # 5. Batch sweeps
 # =========================================================
 .PHONY: batch
-batch: install
+batch: 
 	@echo "📊 Running batch sweeps and exporting CSV..."
 	@mkdir -p $(OUT_DIR)
-	@$(PYTHON) $(SRC_DIR)/batch.py --floors "$${FLOORS:-1,18}" --layouts "$${LAYOUTS:-BASELINE,T,L}" --occ "$${OCC:-5}" --resp "$${RESP:-2}" --max-exit-combos "$${MAX_EXIT_COMBOS:-}" --out "$(OUT_DIR)/batch_results.csv"
+	@$(PYTHON) $(SRC_DIR)/batch.py --floors "$(BATCH_FLOORS)" --layouts "$(BATCH_LAYOUTS)" --occ "$(BATCH_OCC)" --resp "$(BATCH_RESP)" --max-exit-combos "$${MAX_EXIT_COMBOS:-}" --out "$(OUT_DIR)/batch_results.csv"
 	@echo "✅ CSV saved to $(OUT_DIR)/batch_results.csv"
 
 # =========================================================

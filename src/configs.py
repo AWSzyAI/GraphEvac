@@ -50,6 +50,17 @@ SIM_CONFIG: Dict[str, Any] = {
 }
 
 
+# === Batch sweep defaults (used by `make batch`) ===
+# Adjust this block to control the default ranges/layouts/parameters
+# that `make batch` uses when you don't override them via env vars.
+BATCH_CONFIG: Dict[str, Any] = {
+    "floors": "1-18",
+    "layouts": "BASELINE,T,L",
+    "occ": "5-10",
+    "resp": "1-10",
+}
+
+
 def _load_json(path: str) -> Dict[str, Any]:
     with open(path, "r", encoding="utf-8") as f:
         return json.load(f)
